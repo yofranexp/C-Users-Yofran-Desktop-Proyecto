@@ -1,0 +1,638 @@
+---
+title: "Análisis de las Mejores Ligas del Mundo (2019)"
+date: "`r Sys.Date()`"
+author: Yofran Perdomo
+output:
+  rmdformats::downcute:
+  self_contained: true
+thumbnails: true
+lightbox: true
+gallery: false
+highlight: tango
+code_folding: hide
+---
+
+```{r setup, include=FALSE}
+library(tidyverse) 
+library(ggplot2)
+library(magrittr)
+library(maps)
+library(plotly)
+library(stringr)
+library(caret)
+library(randomForest)
+library(DT)
+library(kableExtra)
+library(corrplot)
+```
+
+## Transformación y Cleaning Data
+
+El 80% del trabajo de un data scientist, en términos de tiempo, se dedica a la limpieza de los datos. En el presente proyecto, las variables value, wage, age, entre otras, tuvieron que ser editadas; Se eliminaron caracteres y se conviertieron a otro tipo de datos (caracteres a númericas). Además, se determinó la existencia de posibles NA, para evitar que determinadas operaciones estadísticas arrojen algún error en el código. La finalidad de este proceso es facilitar el manejo de los datos y el posterior análisis exploratorio que se empleará a los mismos. 
+
+
+
+```{r cars, include = F}
+fifa19 <- read.csv(file.choose(), header = T, sep = ",") # Lectura de la data
+```
+
+```{r, results='markup'}
+head(fifa19[, c("Wage", "Value", "Height", "Weight")])
+```
+
+
+
+```{r, include = F}
+# Veamos la estructura de la data
+glimpse(fifa19)
+```
+
+
+
+
+
+```{r, include=FALSE}
+datos <- fifa19
+# variables tales como;
+# wage, height, weight, value
+
+# value
+
+datos$Value <- str_replace(datos$Value,"â‚¬", "")
+
+
+# ahora vamos con la "m"
+
+valores_sin_m <- datos %>%
+  filter(Value == str_count(Value, "M"))  # Codigo  necesario para detectar las M
+
+
+datos_work <- datos %>%
+  filter(Value != str_count(Value, "M"))
+
+View(datos_work)
+# eliminar los m
+
+datos_work$Value <- str_sub(datos_work$Value,1,nchar(datos_work$Value)-1)
+
+
+# Transformar
+
+datos_work$Value <- as.numeric(datos_work$Value)
+# recordar multiplicar por un millon
+
+# wage
+
+datos_work$Wage <- str_replace(datos_work$Wage,"â‚¬", "")
+
+
+
+datos_work$Wage <- str_sub(datos_work$Wage,1,nchar(datos_work$Wage)-1)
+
+
+# transformar los valores
+datos_work$Wage <- as.numeric(datos_work$Wage)
+
+# recordar multiplicar por mil
+
+
+# valores duplicados
+sum(duplicated(datos_work)) # No existen valores duplicados
+
+
+# weight
+
+datos_work$Weight <- str_replace(datos_work$Weight,"lbs", "")
+
+
+# Transformacion
+datos_work$Weigh <- as.numeric(datos_work$Weigh)
+
+
+#height
+# la medida de la altura está en pies
+datos_work$Height <- str_replace_all(datos_work$Height,"'", ".")
+
+datos_work$Height <- as.numeric(datos_work$Height)
+
+
+# recordar transformarlo a metros
+
+
+# variables que no se utilizaran
+
+datos_fifa <- datos_work %>%  
+  select(-ID, -Body.Type, -Real.Face, -Joined, -Loaned.From, -Release.Clause, -Photo, -Flag, -Special, -Work.Rate)
+```
+
+
+```{r, include=F}
+# Crear las ligas segun a los clubes que pertenezcan los jugadores
+
+bundesliga <- c(
+  "1. FC Nürnberg", "1. FSV Mainz 05", "Bayer 04 Leverkusen", "FC Bayern München",
+  "Borussia Dortmund", "Borussia Mönchengladbach", "Eintracht Frankfurt",
+  "FC Augsburg", "FC Schalke 04", "Fortuna Düsseldorf", "Hannover 96",
+  "Hertha BSC", "RB Leipzig", "SC Freiburg", "TSG 1899 Hoffenheim",
+  "VfB Stuttgart", "VfL Wolfsburg", "SV Werder Bremen"
+)
+premierLeague <- c(
+  "Arsenal", "Bournemouth", "Brighton & Hove Albion", "Burnley",
+  "Cardiff City", "Chelsea", "Crystal Palace", "Everton", "Fulham",
+  "Huddersfield Town", "Leicester City", "Liverpool", "Manchester City",
+  "Manchester United", "Newcastle United", "Southampton", 
+  "Tottenham Hotspur", "Watford", "West Ham United", "Wolverhampton Wanderers"
+  
+)
+laliga <- c(
+  "Athletic Club de Bilbao", "Atlético Madrid", "CD Leganés",
+  "Deportivo Alavés", "FC Barcelona", "Getafe CF", "Girona FC", 
+  "Levante UD", "Rayo Vallecano", "RC Celta", "RCD Espanyol", 
+  "Real Betis", "Real Madrid", "Real Sociedad", "Real Valladolid CF",
+  "SD Eibar", "SD Huesca", "Sevilla FC", "Valencia CF", "Villarreal CF"
+)
+
+seriea <- c(
+  "Atalanta","Bologna","Cagliari","Chievo Verona","Empoli", "Fiorentina","Frosinone","Genoa",
+  "Inter","Juventus","Lazio","Milan","Napoli","Parma","Roma","Sampdoria","Sassuolo","SPAL",
+  "Torino","Udinese"
+  
+)
+
+superlig <- c(
+  "Akhisar Belediyespor","Alanyaspor", "Antalyaspor","Medipol Başakşehir FK","BB Erzurumspor","Beşiktaş JK",
+  "Bursaspor","Çaykur Rizespor","Fenerbahçe SK", "Galatasaray SK","Göztepe SK","Kasimpaşa SK",
+  "Kayserispor","Atiker Konyaspor","MKE Ankaragücü", "Sivasspor","Trabzonspor","Yeni Malatyaspor"
+)
+
+bundesliga <- c(
+  "1. FC Nürnberg", "1. FSV Mainz 05", "Bayer 04 Leverkusen", "FC Bayern München",
+  "Borussia Dortmund", "Borussia Mönchengladbach", "Eintracht Frankfurt",
+  "FC Augsburg", "FC Schalke 04", "Fortuna Düsseldorf", "Hannover 96",
+  "Hertha BSC", "RB Leipzig", "SC Freiburg", "TSG 1899 Hoffenheim",
+  "VfB Stuttgart", "VfL Wolfsburg", "SV Werder Bremen"
+)
+
+premierLeague <- c(
+  "Arsenal", "Bournemouth", "Brighton & Hove Albion", "Burnley",
+  "Cardiff City", "Chelsea", "Crystal Palace", "Everton", "Fulham",
+  "Huddersfield Town", "Leicester City", "Liverpool", "Manchester City",
+  "Manchester United", "Newcastle United", "Southampton", 
+  "Tottenham Hotspur", "Watford", "West Ham United", "Wolverhampton Wanderers"
+  
+)
+
+laliga <- c(
+  "Athletic Club de Bilbao", "Atlético Madrid", "CD Leganés",
+  "Deportivo Alavés", "FC Barcelona", "Getafe CF", "Girona FC", 
+  "Levante UD", "Rayo Vallecano", "RC Celta", "RCD Espanyol", 
+  "Real Betis", "Real Madrid", "Real Sociedad", "Real Valladolid CF",
+  "SD Eibar", "SD Huesca", "Sevilla FC", "Valencia CF", "Villarreal CF"
+)
+
+seriea <- c(
+  "Atalanta","Bologna","Cagliari","Chievo Verona","Empoli", "Fiorentina","Frosinone","Genoa",
+  "Inter","Juventus","Lazio","Milan","Napoli","Parma","Roma","Sampdoria","Sassuolo","SPAL",
+  "Torino","Udinese"
+  
+)
+
+superlig <- c(
+  "Akhisar Belediyespor","Alanyaspor", "Antalyaspor","Medipol Başakşehir FK","BB Erzurumspor","Beşiktaş JK",
+  "Bursaspor","Çaykur Rizespor","Fenerbahçe SK", "Galatasaray SK","Göztepe SK","Kasimpaşa SK",
+  "Kayserispor","Atiker Konyaspor","MKE Ankaragücü", "Sivasspor","Trabzonspor","Yeni Malatyaspor"
+)
+
+ligue1 <- c(
+  "Amiens SC", "Angers SCO", "AS Monaco", "AS Saint-Étienne", "Dijon FCO", "En Avant de Guingamp",
+  "FC Nantes", "FC Girondins de Bordeaux", "LOSC Lille", "Montpellier HSC", "Nîmes Olympique", 
+  "OGC Nice", "Olympique Lyonnais","Olympique de Marseille", "Paris Saint-Germain", 
+  "RC Strasbourg Alsace", "Stade Malherbe Caen", "Stade de Reims", "Stade Rennais FC", "Toulouse Football Club"
+)
+
+eredivisie <- c(
+  "ADO Den Haag","Ajax", "AZ Alkmaar", "De Graafschap","Excelsior","FC Emmen","FC Groningen",
+  "FC Utrecht", "Feyenoord","Fortuna Sittard", "Heracles Almelo","NAC Breda",
+  "PEC Zwolle", "PSV","SC Heerenveen","Vitesse","VVV-Venlo","Willem II"
+)
+
+liganos <- c(
+  "Os Belenenses", "Boavista FC", "CD Feirense", "CD Tondela", "CD Aves", "FC Porto",
+  "CD Nacional", "GD Chaves", "Clube Sport Marítimo", "Moreirense FC", "Portimonense SC", "Rio Ave FC",
+  "Santa Clara", "SC Braga", "SL Benfica", "Sporting CP", "Vitória Guimarães", "Vitória de Setúbal"
+)
+
+datos_fifa <- datos_fifa %>%
+  mutate(Ligas = case_when(
+    Club %in% bundesliga ~ "Bundesliga",
+    Club %in% premierLeague ~ "Premier League",
+    Club %in% laliga ~ "La Liga",
+    Club %in% seriea ~ "Serie A",
+    Club %in% superlig ~ "Süper Lig",
+    Club %in% ligue1 ~ "Ligue 1",
+    Club %in% liganos ~ "Liga Nos",
+    Club %in% eredivisie ~ "Eredivisie"
+    ),
+    país = case_when(
+      Ligas == "Bundesliga" ~ "Germany",
+      Ligas == "Premier League" ~ "UK",
+      Ligas == "La Liga" ~ "Spain",
+      Ligas == "Serie A" ~ "Italy",
+      Ligas == "Süper Lig" ~ "Turkey",
+      Ligas == "Ligue 1" ~ "France",
+      Ligas == "Liga Nos" ~ "Portugal", 
+      Ligas == "Eredivisie" ~ "Netherlands")) %>%
+  filter(!is.na(Ligas)) %>%
+  mutate_if(is.factor, as.character())
+
+# transformar los datos wage y value y height
+
+datos_fifa <- datos_fifa %>%
+  mutate(Value = Value*1000000,
+         Wage = Wage*1000,
+         Height = round(Height/3.2808,2))
+
+```
+
+```{r, include=F}
+# ligas, paises de las ligas y pierna natural
+# trabajar como factores
+
+
+datos_fifa$país <- as.factor(datos_fifa$país)
+datos_fifa$país
+datos_fifa$Ligas <- as.factor(datos_fifa$Ligas)
+datos_fifa$Ligas
+
+datos_fifa$Preferred.Foot <- as.factor(datos_fifa$Preferred.Foot)
+datos_fifa$Preferred.Foot
+
+# veamos la cantidad de preferencia de pie, con respeto a las liga
+levels(datos_fifa$Preferred.Foot)
+
+
+datos_fifa <- datos_fifa %>% 
+  filter(Preferred.Foot != "") # limpieza de data
+
+# agregar un titulo
+tabla_foot <- datos_fifa %>%
+  group_by(Ligas, Preferred.Foot) %>%
+  count()
+
+```
+
+## Gráficos y Análisis Exploratorio
+
+```{r}
+# Nivel de overall segun la liga
+
+datos_fifa %>%
+  group_by(Ligas) %>%
+  summarize(Promedio_overall = mean(Overall)) %>%
+  ggplot(aes(reorder(Ligas, Promedio_overall), Promedio_overall, fill = Promedio_overall))+
+  geom_col(show.legend = F)+
+  coord_flip()+
+  theme_minimal()+
+  scale_fill_gradient(low = "#42b3f5", high = "#4272f5")+
+  labs(x = "Overall Promedio", y = "Ligas de Fútbol",
+       title = "Overall Promedio de las Mejores Liga del Mundo (2019)")
+```
+
+
+
+El overall es un indicador para medir la fuerza de juego de cualquier jugador. FIFA lo utiliza para determinar cuáles de sus jugadores, en promedio, tienen califican mejor para ciertas cualidades. Una vez agrupados los jugadores de acuerdo a su liga (país al que pertenece el club), es interesante notar que, contra todo pronóstico, la liga italiana tiene un mejor promedio para el overall. Esto no necesariamente implica que los mejores equipos están allí, dado que, como bien es sabido, el promedio es una medida que se ve afectada por los valores extremos, con lo cual debemos emplear otras medidas para determinar por qué razón la Serie A representa, en promedio, el mejor overall.
+
+
+```{r}
+# Valor de las ligas
+
+datos_fifa %>%
+  group_by(Ligas) %>%
+  summarize(Promedio_Value = sum(Value)) %>%
+  ggplot(aes(reorder(Ligas, Promedio_Value), Promedio_Value, fill = Promedio_Value))+
+  geom_col(show.legend = F)+
+  coord_flip()+
+  theme_minimal()+
+  scale_fill_gradient(low = "#42b3f5", high = "#4272f5")+
+  labs(x = "Value", y = "Ligas de Fútbol(Miles de millones)",
+       title = "Value de las Liga del Mundo (2019)")+
+  scale_y_continuous(labels = c("0 €", "45 €", "90 €", "135 €"))
+```
+
+La liga más valiosa (en miles de millones) resultó ser la Eredivisie. Esto puede deberse, en parte, al ascenso de los clubes holandeses durante el año 2019; El Ajax de Amsterdan tuvo un incremento de valor gracias a su evolución futbolística y lo lejos que llegó en algunas competiciones europeas. 
+
+
+```{r}
+# graficos de densidad
+ggplot(datos_fifa, aes(Overall, fill = Ligas))+
+  geom_density(show.legend = F)+
+  theme_minimal()+
+  facet_grid(Ligas~.)+
+  scale_fill_manual(values = c(rep("#42ddf5", 8)))+
+  labs(title = "Gráficos de Densidad las Mejores Ligas del Mundo (2019)")
+
+```
+
+Los gráficos de densidad representan un modelo útil a la hora de determinar aspectos relevantes como la bimodalidad o intentar explicar el comportamiento de una liga a través de una distribución conocida. El overall puede ayudarnos a describir el comportamiento de una liga, si la data es grupada a partir de las mismas. En este sentido, la Liga Nos (Portugal) representa el comportamiento más cercano a una distribución normal, con lo cual podemos apoyarnos en propiedades relevantes como la simetría y lo que esto significa, por ejemplo, la coincidencia/cercanía entre las medidas de tendencia central.
+
+```{r}
+# Boxplot
+ggplot(datos_fifa, aes(Ligas, Overall, fill = Ligas))+
+  geom_boxplot(show.legend = F)+
+  theme_minimal()+
+  scale_fill_manual(values = c("#42ddf5", "#42ddf5","#42ddf5","#42ddf5",
+                               "#42ddf5","#42ddf5", "#42ddf5", "#42ddf5"))+
+  labs(title = "Box-plot Overall")
+
+```
+
+
+Un gráfico extremadamente útil para determinar outliers es el boxplot. En él, los cuartiles juegan un papel importante; La mediana, el 50% central de los datos y los cuartiles 1 y 3 nos proveen de información útil. Tomando como referencia la variable overall, se observa que el 50% central cuya amplitud es menor es el de los jugadores de la Eredivisie. Asimismo, la mediana más alta de entre todas las ligas está en La Liga. Por último, todas excepto una de de las ligas tiene outliers, y, además, la Serie A tiene mayor cantidad de outliers (superior e inferiormente), con lo cual, medidas como la media pueden verse fuertemente afectados por los mismos. Además, en términos de calidad del jugador (overall mayor), la Eredivisie tiene mayores outliers que se encuentran por encima de los demás jugadores.
+
+
+```{r}
+# relacion del salario entre Overall
+options(scipen=9999) # para trabajar sin notación científica
+ggplot(datos_fifa, aes(Overall, Wage, color = Ligas))+
+  geom_point()+
+  theme_minimal()+
+  facet_grid(~Ligas)+
+  labs(title = "Gráfico de Dipersión (Overall vs Wage)")
+
+# Tabla que ayudara con la interpretación
+
+datos_fifa %>%
+  group_by(Ligas) %>%
+  summarize(Correlación = cor(Overall, Wage))
+```
+
+Los gráficos de correlación entre las variables Wage y Overall (overall vs salario) son útiles en un sentido muy claro; La afirmación "a medida que el overall es mayor, el salario será mayor" podrá tener (o no) sentido. Si examinamos detalladamente para cada una de las ligas, los resultados serán, naturalmente, diferentes. Los datos indican que, la Bundesliga es la liga en el cual están variables están mejor correlacionadas. Se observa además, que la correlación es alta en términos estadísticos, cerca del 84%.  Si bien, para otrass ligas este correlación no es tan fuerte, es apreciable el efecto del overall en  el salario.
+
+
+
+```{r, include=F}
+# Comparemos dos ligas 
+
+ligas <- datos_fifa %>%
+  filter(Ligas %in% c("Premier League", "La Liga")) %>%
+  select(Ligas,Crossing:SlidingTackle) %>%
+  group_by(Ligas) %>%
+  summarise(Crossing = mean(Crossing),
+            Finishing = mean(Finishing),
+            HeadingAccuracy = mean(HeadingAccuracy),  # variables mas relevantes
+            ShortPassing = mean(ShortPassing),
+            Volleys = mean(Volleys),
+            Dribbling= mean(Dribbling),
+            Curve = mean(Curve),
+            Agility = mean(Agility),
+            Aggression = mean(Aggression),
+            BallControl = mean(BallControl)) %>%
+  gather(Skill, Exp, Crossing:`BallControl`, -Ligas)
+ligas
+```
+
+
+
+```{r}
+kbl(head(ligas))
+options(repr.plot.width = 15, repr.plot.height = 8)
+
+ggplot(ligas, aes(Skill, Exp, fill = Ligas))+
+  geom_col(position = "fill")+
+  coord_flip()+
+  scale_fill_manual(values = c("#c92a0a", "#270ac9"))+
+  theme_minimal()+
+  geom_hline(yintercept = 0.5, color = "white", size = 1, linetype = 2)+
+  theme(legend.position = "top", axis.text.x=element_blank())+
+  labs(title = "La Liga VS Premier Ligue", 
+       caption = "FIFA 19",
+       fill = NULL,x = NULL, y = NULL)
+
+```
+
+
+Podemos estar interesados en estadísticas particulares, para así contrastar entre, por ejemplo, dos ligas; En ese caso, podemos comparar La Liga con la Premier League y observar que, en promedio, el volleys (voleo) de los jugadores de ambas ligas es similar. En otros casos, se impone La Liga (véase short passing o finishing), así como también podemos observar que la Premier League se impone en agression
+
+
+```{r, include=F}
+jugadores <- datos_fifa %>%
+  filter(Name %in% c("Neymar Jr","K. De Bruyne")) %>%
+  select(Name,Crossing:SlidingTackle) %>%
+  rename_all(funs(gsub("[[:punct:]]", " ", .))) %>%
+  gather(Skill, Exp, Crossing:`SlidingTackle`, -Name)
+```
+
+
+```{r}
+head(jugadores)
+
+# Gráfica para comparar los jugadores
+ggplot(jugadores, aes(Skill, Exp, fill = Name))+
+  geom_col(position = "fill")+
+  coord_flip()+
+  scale_fill_manual(values = c("#c92a0a", "#270ac9"))+
+  theme_minimal()+
+  geom_hline(yintercept = 0.5, color = "white", size = 1, linetype = 2)+
+  theme(legend.position = "top", axis.text.x=element_blank())+
+  labs(title = "Neymar Jr VS K. De Bruyne", 
+       caption = "FIFA 19",
+       fill = NULL,x = NULL, y = NULL)
+```
+
+Este análisis comparativo puede ser más específico y llevarse a cabo no solo con ligas, sino también con jugadores; Un primer ejemplo es el De Bruyne VS Neymar. Dos jugadores de la élite deportiva futbolística hoy por hoy (y aún más en 2019). En ese sentido, De Bruyne (en rojo) se impone en muchos aspectos (visión de juego, fuerza, potencia de tiro, pases cortos, entre otros). Esta comparación resulta particularmente útil cuando se contrastan jugadores que pertenecen a la misma posición. Así, se puede encontrar quién es más efectivo.
+
+## Comparación de los Finalistas de la Champions
+
+```{r, include=FALSE}
+vs <- datos_work%>%
+  filter(Club %in% c("Tottenham Hotspur","Liverpool"))%>%
+  select(Club,Crossing:SlidingTackle) %>%
+  group_by(Club) %>%
+  summarise(Crossing = mean(Crossing),
+            Finishing = mean(Finishing),
+            HeadingAccuracy = mean(HeadingAccuracy),  # variables mas relevantes
+            ShortPassing = mean(ShortPassing),
+            Volleys = mean(Volleys),
+            Dribbling= mean(Dribbling),
+            Curve = mean(Curve),
+            Agility = mean(Agility),
+            Aggression = mean(Aggression),
+            Stamina = mean(Stamina),
+            StandingTackle = mean(StandingTackle),
+            BallControl = mean(BallControl)) %>%
+  gather(Skill, Exp, Crossing:`BallControl`, -Club)
+
+```
+
+
+
+```{r}
+ggplot(vs, aes(Skill, Exp, fill = Club))+
+  geom_col(position = "fill")+
+  coord_flip()+
+  scale_fill_manual(values = c("#c92a0a", "#270ac9"))+
+  theme_minimal()+
+  geom_hline(yintercept = 0.5, color = "white", size = 1, linetype = 2)+
+  theme(legend.position = "top", axis.text.x=element_blank())+
+  labs(title = "Totthenham VS Liverpool", 
+       caption = "FIFA 19",
+       fill = NULL,x = NULL, y = NULL)
+
+```
+
+
+
+![Resultado](C:\Users\Yofran\Desktop\resultado.PNG)
+
+A pesar que la gráfica donde se comparan estos equipos, están muy parejas. Liverpool gana el partido, por lo que las variables solo nos permitiría formular hipótesis, más no describir la realidad.
+
+
+
+# Modelo Lineal
+
+
+
+
+```{r, include=F}
+delanteros <- c("ST", "LW", "RW", "LF", "RF", "RS","LS", "CF")
+medio_campista <- c("CM","RCM","LCM", "CDM","RDM","LDM", "CAM", "LAM", "RAM", "RM", "LM")
+
+datos_fifa <- datos_fifa %>%
+  mutate(posiciones = as.factor(if_else(Position %in% delanteros,"Delantero",
+                                        if_else(Position %in% medio_campista, "Medio Campista",
+                                                if_else(Position == "GK", "Portero", "Defender")))))
+
+
+datos_fifa <- datos_fifa %>%
+  select(Name,Age, Overall, Potential, Value, Wage, Preferred.Foot,
+         Height, Weight, Crossing:SlidingTackle,Ligas,país,posiciones, International.Reputation)
+
+```
+
+
+# Medidas Resumenes de las Variables del Modelo
+```{r}
+datos_fifa$International.Reputation<- as.factor(datos_fifa$International.Reputation)
+datos_fifa$Weight <- as.numeric(datos_fifa$Weight)
+
+
+kbl(summary(datos_fifa[,c(2:6,8:38)]))
+
+
+```
+
+## Correlaciones
+
+```{r}
+corr <- datos_fifa[,c(2:6,8:38)]
+correla <- cor(corr)
+
+options(repr.plot.width = 50, repr.plot.height = 100)
+corrplot(correla, type = "upper", method = "circle", number.cex = 9/ ncol(correla))
+
+```
+
+
+# Partición de Data
+
+```{r, include=FALSE}
+
+# modelo solo con los delanteros
+atacantes <- datos_fifa %>%
+  filter(posiciones == "Delantero")
+```
+
+
+
+```{r}
+# semilla
+set.seed(143)
+
+# Data de entrenamiento
+particion <- sample(1:nrow(atacantes), size = 0.7*nrow(atacantes), replace = F)
+fifa_train <- atacantes[particion,]
+fifa_test <- atacantes[-particion,]
+
+```
+
+# Comportamiento del Salario
+
+```{r}
+
+ggplot(atacantes,
+       aes(Wage))+
+  geom_histogram(fill = "#42f5bc")+
+  theme_minimal()+
+  labs(title ="Histograma del Salario de los Jugadores Delanteros (2019)")
+```
+
+Se observa que el comportamiento tiene un sesgo hacia la derecha por lo tanto, para poder trabajar con el modelo, lo mejor seria que la variable tenga una distribución simétrica, por lo tanto se aplica Log.
+
+```{r}
+ggplot(atacantes,
+       aes(log(Wage)))+
+  geom_histogram(fill = "#42f5bc")+
+  theme_minimal()+
+  labs(title ="Histograma del Salario de los Jugadores Delanteros (2019)", x = "log(Wage)")
+```
+
+# Construcción del Modelo
+
+```{r}
+modelo_step <- step(
+    object = lm(log(Wage) ~.,
+                fifa_train[,c(2:6,8:38)]), 
+   direction = "backward",
+   scope = list(upper= ~., lower = ~1),
+   trace = F
+   )
+
+modelo_step
+summary(modelo_step)
+
+```
+
+El modelo es bueno, debido a que R-cuadrado es bastante alto. La variabilidad del modelo es explicado en un 81%, el p-valor indica que el modelo es significativo. Es un buen modelo para formar la variable Wage.
+
+# Residuos
+
+```{r}
+shapiro.test(residuals(modelo_step))
+```
+
+Los residuos no se ajustan a una distribución normal, por lo que el modelo puede contener algunas deficiencias.
+
+# RMSE
+
+```{r, message=F}
+fifa_train %>%
+  transmute(Name = fifa_train$Name,
+            Wage = Wage,
+            residuals = residuals(modelo_step)) %>%
+  summarize(rmse = mean(residuals**2))
+```
+
+El error cuádratico medio indica un buen ajuste. Por lo tanto, se tomará en cuenta el salario de los jugadores real y el del modelo.
+
+# Salarios Top (Modelo vs Real)
+
+```{r}
+top_wage <- datos_fifa %>%
+  transmute(Name = datos_fifa$Name,
+            Wage = Wage,
+            valor_p = exp(predict(modelo_step, datos_fifa))) %>%
+  top_n(Wage, 10)
+
+```
+
+```{r}
+head(top_wage, 10)
+```
+
+Según el modelo, Cristiano Ronaldo gana por encima de Messi. También se observa que existen jugadores que ganan en la realidad el doble de lo que indica el modelo, o valores muy por debajo o muy por encima. 
+
+
+
+
+
+
